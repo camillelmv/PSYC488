@@ -1,0 +1,38 @@
+import pandas as pd
+import numpy as np
+import statsmodels.formula.api as smf
+
+df = pd.read_csv("Phase2_data.csv", sep=";")
+
+# Recode P_Gamble as dummy (0.5 = reference, 0.9 = 1)
+df["P_Gamble_dummy"] = (df["P_Gamble"] == 0.9).astype(int)
+
+# Standardize continuous predictors
+df["deltaSV_z"] = (df["deltaSV"] - df["deltaSV"].mean()) / df["deltaSV"].std()
+df["confidence_c"] = df["confidence"] - df["confidence"].mean()
+df["trial_z"] = (df["trial"] - df["trial"].mean()) / df["trial"].std()
+
+
+df = df.sort_values(["PID", "trial"])
+
+# This creates your key predictor:
+# confidence on trial N predicting choice on trial N+1
+df["confidence_prev"] = df.groupby("PID")["confidence"].shift(1)
+
+df_lagged = df.dropna(subset=["confidence_prev"])
+df_lagged["confidence_prev_c"] = (
+    df_lagged["confidence_prev"] - df_lagged["confidence_prev"].mean()
+)
+
+# How many trials are missing/skipped per participant?
+df_sorted = df.sort_values(["PID", "trial"])
+df_sorted["trial_diff"] = df_sorted.groupby("PID")["trial"].diff()
+print(df_sorted["trial_diff"].value_counts())
+
+# Which trials are skipped?
+skipped = df_sorted[df_sorted["trial_diff"] > 1][["PID", "trial", "trial_diff"]]
+print(f"\nTotal skipped transitions: {len(skipped)}")
+print(skipped.head(10))
+
+# Only keep rows where the previous trial was exactly 1 step back
+df_lagged = df_lagged[df_sorted["trial_diff"] == 1]
