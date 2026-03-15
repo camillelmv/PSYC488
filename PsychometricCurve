@@ -1,0 +1,53 @@
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+import seaborn as sns
+
+# --- Load and prepare data ---
+df = pd.read_csv("Phase2_data.csv", sep=";")
+
+# Standardize deltaSV
+df["deltaSV_z"] = (df["deltaSV"] - df["deltaSV"].mean()) / df["deltaSV"].std()
+
+# Sort and create lagged variables
+df_sorted = df.sort_values(["PID", "trial"]).reset_index(drop=True)
+df_sorted["confidence_prev"] = df_sorted.groupby("PID")["confidence"].shift(1)
+df_sorted["Gamble_prev"] = df_sorted.groupby("PID")["Gamble"].shift(1)
+df_sorted["trial_diff"] = df_sorted.groupby("PID")["trial"].diff()
+
+# Keep only consecutive trials and drop NaNs
+df_lagged = df_sorted[df_sorted["trial_diff"] == 1].reset_index(drop=True)
+df_lagged = df_lagged.dropna(subset=["confidence_prev", "Gamble_prev"])
+
+# --- Psychometric curve ---
+fig, ax = plt.subplots(figsize=(9, 6))
+
+sns.regplot(
+    data=df_lagged[df_lagged["Gamble_prev"] == 1],
+    x="deltaSV_z", y="Gamble",
+    logistic=True, ci=95,
+    scatter=False,
+    label="Gambled on N-1",
+    color="steelblue",
+    ax=ax
+)
+
+sns.regplot(
+    data=df_lagged[df_lagged["Gamble_prev"] == 0],
+    x="deltaSV_z", y="Gamble",
+    logistic=True, ci=95,
+    scatter=False,
+    label="Did not gamble on N-1",
+    color="tomato",
+    ax=ax
+)
+
+ax.set_xlabel("Standardized ΔSV", fontsize=12)
+ax.set_ylabel("P(Gamble on trial N)", fontsize=12)
+ax.set_title("Psychometric Curve by Previous Trial Choice", fontsize=14, pad=15)
+ax.legend(fontsize=11)
+ax.set_ylim(-0.05, 1.05)
+
+plt.tight_layout()
+plt.savefig("psychometric_curve.png", dpi=150, bbox_inches="tight")
+plt.show()
