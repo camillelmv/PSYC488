@@ -1,0 +1,28 @@
+import pandas as pd
+import numpy as np
+
+# --- Load data ---
+df = pd.read_csv("Phase2_data.csv", sep=";")
+
+# --- Standardize continuous predictors ---
+df["deltaSV_z"] = (df["deltaSV"] - df["deltaSV"].mean()) / df["deltaSV"].std()
+df["confidence_c"] = df["confidence"] - df["confidence"].mean()
+
+# --- Recode P_Gamble as dummy (0.5 = 0, 0.9 = 1) ---
+df["P_Gamble_dummy"] = (df["P_Gamble"] == 0.9).astype(int)
+
+# --- Sort and create lagged variables ---
+df_sorted = df.sort_values(["PID", "trial"]).reset_index(drop=True)
+df_sorted["confidence_prev"] = df_sorted.groupby("PID")["confidence"].shift(1)
+df_sorted["Gamble_prev"] = df_sorted.groupby("PID")["Gamble"].shift(1)
+df_sorted["trial_diff"] = df_sorted.groupby("PID")["trial"].diff()
+
+# --- Keep only consecutive trials ---
+df_lagged = df_sorted[df_sorted["trial_diff"] == 1].reset_index(drop=True)
+df_lagged = df_lagged.dropna(subset=["confidence_prev", "Gamble_prev"])
+
+# --- Center lagged confidence ---
+df_lagged["confidence_prev_c"] = df_lagged["confidence_prev"] - df_lagged["confidence_prev"].mean()
+
+print(f"Data loaded: {df.shape[0]} total trials, {df['PID'].nunique()} participants")
+print(f"Lagged dataset: {df_lagged.shape[0]} trials ready for analysis")
