@@ -1,0 +1,93 @@
+import pandas as pd
+import numpy as np
+from scipy.optimize import minimize
+from scipy.special import expit
+
+# --- Load Phase 1 data ---
+df_p1 = pd.read_csv("Phase1_data.csv", sep=";")
+print(f"Phase 1: {df_p1.shape[0]} trials, {df_p1['PID'].nunique()} participants")
+
+# --- APT Model ---
+def apt_model(params, p_gamble, v_risky, v_certain):
+    alpha, beta, mu = params
+    SV_certain = v_certain ** alpha
+    SV_risky = (p_gamble ** (1 - beta)) * (v_risky ** alpha)
+    delta_SV = SV_risky - SV_certain
+    p_choice = expit(mu * delta_SV)
+    return p_choice
+
+def neg_log_likelihood(params, p_gamble, v_risky, v_certain, choices):
+    log_alpha = params[0]
+    beta      = params[1]
+    log_mu    = params[2]
+
+    alpha = np.exp(log_alpha)
+    mu    = np.exp(log_mu)
+
+    p_choice = apt_model([alpha, beta, mu], p_gamble, v_risky, v_certain)
+    p_choice = np.clip(p_choice, 1e-10, 1 - 1e-10)
+
+    # Negative log likelihood
+    nll = -np.sum(
+        choices * np.log(p_choice) +
+        (1 - choices) * np.log(1 - p_choice)
+    )
+
+    # Pseudopriors applied in log space (raw parameters)
+    nll += 0.5 * (log_alpha ** 2)                    # log(alpha) ~ N(0,1)
+    nll += 0.5 * (log_mu ** 2)                        # log(mu) ~ N(0,1)
+    nll += 0.5 * ((beta - 0.5) / 0.5) ** 2           # beta ~ N(0.5, 0.5)
+
+    return nll
+
+# --- Estimate per participant ---
+results = []
+
+for pid in df_p1["PID"].unique():
+    subj = df_p1[df_p1["PID"] == pid].dropna(
+        subset=["P_Gamble", "A_Gamble", "A_Certain", "Gamble"]
+    )
+
+    p_gamble  = subj["P_Gamble"].values
+    v_risky   = subj["A_Gamble"].values
+    v_certain = subj["A_Certain"].values
+    choices   = subj["Gamble"].values
+
+    # Initial values (log space for alpha and mu)
+    x0 = [np.log(0.65), 0.30, np.log(6.77)]
+
+    res = minimize(
+        neg_log_likelihood,
+        x0,
+        args=(p_gamble, v_risky, v_certain, choices),
+        method="L-BFGS-B",
+        bounds=[
+            (None, None),   # log(alpha): unconstrained
+            (0, 1),         # beta: bounded 0-1
+            (None, None)    # log(mu): unconstrained
+        ]
+    )
+
+    results.append({
+        "PID":   pid,
+        "alpha": np.exp(res.x[0]),
+        "beta":  res.x[1],
+        "mu":    np.exp(res.x[2]),
+        "converged": res.success
+    })
+
+# --- Build and check parameters dataframe ---
+params_df = pd.DataFrame(results)
+print("\n=== Parameter estimates summary ===")
+print(params_df[["alpha", "beta", "mu"]].describe().round(3))
+print(f"\nConverged: {params_df['converged'].sum()} / {len(params_df)} participants")
+print("\n=== Medians ===")
+print(params_df[["alpha", "beta", "mu"]].median().round(3))
+
+# --- Save for future use ---
+params_df.to_csv("participant_params.csv", index=False)
+print("\nSaved to participant_params.csv")
+
+import numpy as np
+print("Our mu median (exp transformed):", round(np.exp(2.518), 3))
+# If this is close to 6.77, we're actually fine!
