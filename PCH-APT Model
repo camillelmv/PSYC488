@@ -1,0 +1,87 @@
+import pandas as pd
+import numpy as np
+import statsmodels.formula.api as smf
+
+# --- Load data ---
+df_lagged = pd.read_csv("Phase2_lagged_with_params.csv")
+print(f"Loaded: {df_lagged.shape[0]} trials, {df_lagged['PID'].nunique()} participants")
+
+# --- Compute deltaSV_prev (Castanheira's deltaSV from previous trial t) ---
+df_lagged = df_lagged.sort_values(["PID", "trial"]).reset_index(drop=True)
+df_lagged["deltaSV_prev"] = df_lagged.groupby("PID")["deltaSV"].shift(1)
+df_lagged["deltaSV_prev_z"] = (
+    df_lagged["deltaSV_prev"] - df_lagged["deltaSV_prev"].mean()
+) / df_lagged["deltaSV_prev"].std()
+
+# Drop NaNs in deltaSV_prev (first trial per participant has no previous trial)
+df_lagged = df_lagged.dropna(subset=["deltaSV_prev"]).reset_index(drop=True)
+
+print(f"Trials after dropping NaNs: {df_lagged.shape[0]}")
+
+# --- Compute prospect theory component for current trial t+1 ---
+df_lagged["SV_risky"] = (df_lagged["P_Gamble"] ** (1 - df_lagged["beta"])) * \
+                         (df_lagged["A_Gamble"] ** df_lagged["alpha"])
+df_lagged["SV_certain"] = df_lagged["A_Certain"] ** df_lagged["alpha"]
+df_lagged["PT_component"] = df_lagged["SV_risky"] - df_lagged["SV_certain"]
+
+
+# --- Fit Equation 8 ---
+model_eq8 = smf.mixedlm(
+    formula="PT_component ~ deltaSV_prev_z + Gamble_prev",
+    data=df_lagged,
+    groups=df_lagged["PID"]
+)
+result_eq8 = model_eq8.fit(method="bfgs")
+print(result_eq8.summary())
+
+# --- Store deltaSV_modified as PT_component + PCH contribution ---
+df_lagged["deltaSV_modified"] = (
+    df_lagged["PT_component"] + result_eq8.fittedvalues
+)
+
+print("\n=== deltaSV_modified preview ===")
+print(df_lagged[["PID", "trial", "PT_component",
+                  "deltaSV_modified"]].head(10))
+
+print("\n=== deltaSV_modified preview ===")
+print(df_lagged[["PID", "trial", "PT_component",
+                  "deltaSV_prev_z", "Gamble_prev",
+                  "deltaSV_modified"]].head(10))
+
+#Results table#
+
+def get_results_table(result, model_name):
+    # Extract fixed effects only
+    coefs = result.fe_params
+    se = result.bse_fe
+    zvals = coefs / se  # compute z manually
+    pvals = result.pvalues[coefs.index]  # filter to fixed effects only
+    ci_lower = coefs - 1.96 * se
+    ci_upper = coefs + 1.96 * se
+
+    df_table = pd.DataFrame({
+        "Model": model_name,
+        "Predictor": coefs.index,
+        "β": coefs.values.round(4),
+        "SE": se.values.round(4),
+        "z": zvals.values.round(3),
+        "p": pvals.values.round(4),
+        "CI_lower": ci_lower.values.round(4),
+        "CI_upper": ci_upper.values.round(4)
+    })
+
+    # Significance stars
+    df_table["sig"] = df_table["p"].apply(lambda x:
+                                          "***" if x < 0.001 else
+                                          "**" if x < 0.01 else
+                                          "*" if x < 0.05 else "ns"
+                                          )
+
+    return df_table
+
+
+table_eq8 = get_results_table(result_eq8, "Equation 8")
+print(table_eq8.to_string(index=False))
+
+table_eq8.to_csv("results_equation8.csv", index=False)
+print("\nSaved to results_equation8.csv")
