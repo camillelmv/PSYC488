@@ -1,0 +1,71 @@
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+import seaborn as sns
+
+# --- Load and prepare data ---
+df = pd.read_csv("Phase2_data.csv", sep=";")
+df["deltaSV_z"] = (df["deltaSV"] - df["deltaSV"].mean()) / df["deltaSV"].std()
+
+df_sorted = df.sort_values(["PID", "trial"]).reset_index(drop=True)
+df_sorted["Gamble_prev"] = df_sorted.groupby("PID")["Gamble"].shift(1)
+df_sorted["confidence_prev"] = df_sorted.groupby("PID")["confidence"].shift(1)
+df_sorted["trial_diff"] = df_sorted.groupby("PID")["trial"].diff()
+
+df_lagged = df_sorted[df_sorted["trial_diff"] == 1].reset_index(drop=True)
+df_lagged = df_lagged.dropna(subset=["confidence_prev", "Gamble_prev"])
+
+# --- Bin the data ---
+n_bins = 10
+df_lagged["deltaSV_bin"] = pd.cut(df_lagged["deltaSV_z"], bins=n_bins)
+
+def get_binned_stats(data):
+    """Compute mean deltaSV_z, mean P(Gamble) and SEM per bin"""
+    grouped = data.groupby("deltaSV_bin", observed=True)
+    bin_x    = grouped["deltaSV_z"].mean()
+    bin_y    = grouped["Gamble"].mean()
+    bin_sem  = grouped["Gamble"].sem()
+    return bin_x, bin_y, bin_sem
+
+bin_x_g,  bin_y_g,  bin_sem_g  = get_binned_stats(
+    df_lagged[df_lagged["Gamble_prev"] == 1])
+bin_x_ng, bin_y_ng, bin_sem_ng = get_binned_stats(
+    df_lagged[df_lagged["Gamble_prev"] == 0])
+
+# --- Plot ---
+fig, ax = plt.subplots(figsize=(9, 6))
+
+# Fitted logistic curves
+sns.regplot(
+    data=df_lagged[df_lagged["Gamble_prev"] == 1],
+    x="deltaSV_z", y="Gamble",
+    logistic=True, ci=95, scatter=False,
+    color="aquamarine", ax=ax
+)
+sns.regplot(
+    data=df_lagged[df_lagged["Gamble_prev"] == 0],
+    x="deltaSV_z", y="Gamble",
+    logistic=True, ci=95, scatter=False,
+    color="lightcoral", ax=ax
+)
+
+# Binned data points with error bars
+ax.errorbar(bin_x_g, bin_y_g, yerr=bin_sem_g,
+            fmt="o-", color="lightseagreen",
+            markersize=6, linewidth=1.5, capsize=4,
+            label="Gambled on N-1")
+ax.errorbar(bin_x_ng, bin_y_ng, yerr=bin_sem_ng,
+            fmt="o-", color="indianred",
+            markersize=6, linewidth=1.5, capsize=4,
+            label="Did not gamble on N-1")
+
+ax.set_xlabel("Standardized ΔSV", fontsize=12)
+ax.set_ylabel("P(Gamble on trial N+1)", fontsize=12)
+ax.set_title("Psychometric Curve by Previous Trial Choice", fontsize=14, pad=15)
+ax.legend(fontsize=11)
+ax.set_ylim(-0.05, 1.05)
+ax.set_xlim(-2, 2)
+
+plt.tight_layout()
+plt.savefig("psychometric_curve_binned.png", dpi=150, bbox_inches="tight")
+plt.show()
