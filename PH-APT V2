@@ -1,0 +1,67 @@
+import pandas as pd
+import numpy as np
+import statsmodels.formula.api as smf
+
+# --- Load data ---
+df_lagged = pd.read_csv("/Users/camille./PyCharmMiscProject/HPT/Phase2_with_deltaSV_modified.csv")
+print(f"Loaded: {df_lagged.shape[0]} trials, {df_lagged['PID'].nunique()} participants")
+
+# --- Create kappa and theta dummy variables ---
+df_lagged["kappa"] = (df_lagged["Gamble_prev"] == 1).astype(int)
+df_lagged["theta"] = (df_lagged["Gamble_prev"] == 0).astype(int)
+
+# --- Center previous confidence ---
+df_lagged["conf_prev_c"] = (
+    df_lagged["confidence_prev"] - df_lagged["confidence_prev"].mean()
+)
+
+# --- Results table function (defined BEFORE use) ---
+def get_results_table(result, model_name):
+    coefs    = result.fe_params
+    se       = result.bse_fe
+    zvals    = coefs / se
+    pvals    = result.pvalues[coefs.index]
+    ci_lower = coefs - 1.96 * se
+    ci_upper = coefs + 1.96 * se
+
+    df_table = pd.DataFrame({
+        "Model":     model_name,
+        "Predictor": coefs.index,
+        "β":         coefs.values.round(4),
+        "SE":        se.values.round(4),
+        "z":         zvals.values.round(3),
+        "p":         pvals.values.round(4),
+        "CI_lower":  ci_lower.values.round(4),
+        "CI_upper":  ci_upper.values.round(4)
+    })
+
+    df_table["sig"] = df_table["p"].apply(lambda x:
+        "***" if x < 0.001 else
+        "**"  if x < 0.01  else
+        "*"   if x < 0.05  else "ns"
+    )
+    return df_table
+
+# --- Fit Equation 8 with interactions ---
+model_eq8 = smf.mixedlm(
+    formula="PT_component ~ deltaSV_prev_z + kappa + conf_prev_c + "
+            "kappa:conf_prev_c + "
+            "kappa:deltaSV_prev_z + "
+            "conf_prev_c:deltaSV_prev_z",
+    data=df_lagged,
+    groups=df_lagged["PID"]
+)
+result_eq8 = model_eq8.fit(method="bfgs")
+print(result_eq8.summary())
+
+# --- Store deltaSV_modified ---
+df_lagged["deltaSV_modified"] = (
+    df_lagged["PT_component"] + result_eq8.fittedvalues
+)
+
+# --- Results table ---
+table_eq8 = get_results_table(result_eq8, "Equation 8 with interactions")
+print(table_eq8.to_string(index=False))
+
+table_eq8.to_csv("results_equation8_interactions.csv", index=False)
+print("\nSaved to results_equation8_interactions.csv")
